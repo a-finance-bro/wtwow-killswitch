@@ -19,6 +19,7 @@ if PLATFORM == "Darwin":
             self.is_armed = False
             self.monitor_thread = None
             self.stop_event = threading.Event()
+            self.is_shutting_down = False
             self.anchor_path = usb_monitor.get_anchor_path()
             self.sequences_map = sequences.get_sequences()
             self.selected_sequence = list(self.sequences_map.keys())[0]
@@ -85,23 +86,44 @@ if PLATFORM == "Darwin":
                 self.title = "🟢"  # Green circle for disarmed
         
         def monitor_loop(self):
-            while not self.stop_event.is_set():
-                if not usb_monitor.is_drive_present(self.anchor_path):
-                    self.trigger_sequence()
-                    break
-                time.sleep(0.5)
+            try:
+                while not self.stop_event.is_set() and not self.is_shutting_down:
+                    if not usb_monitor.is_drive_present(self.anchor_path):
+                        if not self.is_shutting_down:
+                            self.trigger_sequence()
+                        break
+                    time.sleep(0.5)
+            except Exception as e:
+                logging.error(f"Monitor loop error: {e}")
         
         def trigger_sequence(self):
+            if self.is_shutting_down:
+                return
+            
             self.disarm()
             action = self.sequences_map.get(self.selected_sequence)
             if action:
-                print(f"Triggering sequence: {self.selected_sequence}")
-                action()
+                try:
+                    logging.info(f"Triggering sequence: {self.selected_sequence}")
+                    action()
+                except Exception as e:
+                    logging.error(f"Sequence trigger error: {e}")
+        
+        def cleanup(self):
+            """Clean up resources before quitting"""
+            self.is_shutting_down = True
+            if self.is_armed:
+                self.disarm()
+            # Wait for monitor thread to stop
+            if self.monitor_thread and self.monitor_thread.is_alive():
+                self.stop_event.set()
+                self.monitor_thread.join(timeout=2.0)
         
         def quit_app(self, _):
             if self.is_armed:
                 rumps.alert("Cannot quit while ARMED", "Please disarm the killswitch first.")
             else:
+                self.cleanup()
                 rumps.quit_application()
 
 else:
@@ -210,6 +232,38 @@ else:
 
 
 if __name__ == "__main__":
+    import signal
+    import atexit
+    
+    # Lock file path
+    lock_file = None
+    app_instance = None
+    
+    def cleanup_on_exit():
+        """Cleanup function called on exit"""
+        global lock_file, app_instance
+        try:
+            if app_instance and hasattr(app_instance, 'cleanup'):
+                app_instance.cleanup()
+        except:
+            pass
+        
+        try:
+            if lock_file and os.path.exists(lock_file):
+                os.remove(lock_file)
+        except:
+            pass
+    
+    def signal_handler(signum, frame):
+        """Handle termination signals"""
+        cleanup_on_exit()
+        sys.exit(0)
+    
+    # Register cleanup handlers
+    atexit.register(cleanup_on_exit)
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    
     try:
         # Setup basic logging to catch startup errors
         import logging
@@ -223,10 +277,11 @@ if __name__ == "__main__":
         else:
             base_path = os.path.dirname(os.path.abspath(__file__))
             
-        log_file = os.path.join(base_path, "killswitch_debug.log")
+        log_file_path = os.path.join(base_path, "killswitch_debug.log")
+        lock_file = os.path.join(base_path, ".killswitch.lock")
         
         logging.basicConfig(
-            filename=log_file,
+            filename=log_file_path,
             level=logging.DEBUG,
             format='%(asctime)s - %(levelname)s - %(message)s'
         )
@@ -234,12 +289,41 @@ if __name__ == "__main__":
         logging.info("Starting KillSwitch App...")
         logging.info(f"Platform: {PLATFORM}")
         logging.info(f"Base Path: {base_path}")
+        
+        # Single instance check
+        if os.path.exists(lock_file):
+            # Check if the process is actually running
+            try:
+                with open(lock_file, 'r') as f:
+                    old_pid = int(f.read().strip())
+                
+                # Check if process exists
+                try:
+                    os.kill(old_pid, 0)  # Signal 0 just checks if process exists
+                    logging.error(f"Another instance is already running (PID: {old_pid})")
+                    print(f"ERROR: Another instance is already running (PID: {old_pid})")
+                    print("If you're sure no other instance is running, delete the lock file:")
+                    print(f"  {lock_file}")
+                    sys.exit(1)
+                except OSError:
+                    # Process doesn't exist, remove stale lock file
+                    logging.info(f"Removing stale lock file from PID {old_pid}")
+                    os.remove(lock_file)
+            except:
+                # Couldn't read lock file, remove it
+                os.remove(lock_file)
+        
+        # Create lock file with current PID
+        with open(lock_file, 'w') as f:
+            f.write(str(os.getpid()))
+        
+        logging.info(f"Created lock file with PID {os.getpid()}")
 
-        app = KillSwitchApp()
+        app_instance = KillSwitchApp()
         if PLATFORM == "Darwin":
-            app.run()
+            app_instance.run()
         else:
-            app.run()
+            app_instance.run()
             
     except Exception as e:
         import traceback
@@ -251,4 +335,7 @@ if __name__ == "__main__":
             # Last resort if logging fails
             with open(os.path.expanduser("~/killswitch_crash.txt"), "w") as f:
                 f.write(error_msg)
+        finally:
+            cleanup_on_exit()
+
 
