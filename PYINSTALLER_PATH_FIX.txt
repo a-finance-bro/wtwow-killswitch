@@ -1,0 +1,64 @@
+================================================================================
+HOW TO FIX PYINSTALLER PATH ISSUE
+================================================================================
+
+The issue: PyInstaller is installed but not in your PATH.
+The warning said: "scripts are installed in '/Users/ansh/Library/Python/3.13/bin'"
+
+SOLUTION - Choose ONE of these options:
+
+--------------------------------------------------------------------------------
+OPTION 1: Run PyInstaller with Full Path (QUICKEST)
+--------------------------------------------------------------------------------
+
+Instead of:
+    pyinstaller killswitch.spec
+
+Run this:
+    /Users/ansh/Library/Python/3.13/bin/pyinstaller killswitch.spec
+
+Or use python3 -m:
+    python3 -m PyInstaller killswitch.spec
+
+
+--------------------------------------------------------------------------------
+OPTION 2: Add to PATH Permanently (RECOMMENDED)
+--------------------------------------------------------------------------------
+
+1. Open your shell configuration file:
+    nano ~/.zshrc
+
+2. Add this line at the end:
+    export PATH="/Users/ansh/Library/Python/3.13/bin:$PATH"
+
+3. Save and exit (Ctrl+X, then Y, then Enter)
+
+4. Reload your shell:
+    source ~/.zshrc
+
+5. Now you can run:
+    pyinstaller killswitch.spec
+
+
+--------------------------------------------------------------------------------
+OPTION 3: Use the Build Script (EASIEST)
+--------------------------------------------------------------------------------
+
+I can create a build script that handles this for you!
+Just run:
+    ./build_app.sh
+
+(I'll create this script for you if you want)
+
+
+================================================================================
+QUICK START - BUILD THE APP NOW:
+================================================================================
+
+Copy and paste this command:
+
+    python3 -m PyInstaller killswitch.spec
+
+This will create the .app file in the dist/ folder!
+
+================================================================================
